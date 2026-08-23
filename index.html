@@ -84,8 +84,10 @@
             useEffect(() => { localStorage.setItem('onax_history', JSON.stringify(mealsToday)); }, [mealsToday]);
 
             const consumed = mealsToday.reduce((acc, meal) => {
-                acc.calories += meal.meal_totals?.calories || 0; acc.protein += meal.meal_totals?.protein_grams || 0;
-                acc.carbs += meal.meal_totals?.carbs_grams || 0; acc.fat += meal.meal_totals?.fat_grams || 0;
+                acc.calories += meal.meal_totals?.calories || 0; 
+                acc.protein += meal.meal_totals?.protein_grams || 0;
+                acc.carbs += meal.meal_totals?.carbs_grams || 0; 
+                acc.fat += meal.meal_totals?.fat_grams || 0;
                 return acc;
             }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
 
@@ -99,7 +101,6 @@
                 recognition.start();
             };
 
-            // SEPARATED IMAGE ANALYSIS
             const runImageAnalysis = async (imageData) => {
                 setIsAnalyzing(true);
                 setSelectedImage(imageData);
@@ -123,11 +124,10 @@
                 finally { setIsAnalyzing(false); }
             };
 
-            // SEPARATED TEXT/RECIPE ANALYSIS (CLEARS IMAGE COMPLETELY)
             const runTextAnalysis = async (textData) => {
                 if (!textData.trim()) return;
                 setIsAnalyzing(true);
-                setSelectedImage(null); // Clear any old image!
+                setSelectedImage(null);
                 setActiveTab('analysis');
                 try {
                     const prompt = `Analyze this Indian recipe or food description: "${textData}". Determine if each item is counted (pieces), in milliliters (ml), or in grams (g). JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number},"foods":[{"food_name":"string","unit":"pieces|ml|g","amount":number,"base_calories":number,"base_protein":number,"base_carbs":number,"base_fat":number}]}`;
@@ -187,7 +187,12 @@
                         id: Date.now(),
                         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                         imageUrl: selectedImage?.url || null,
-                        meal_totals: computedTotals,
+                        meal_totals: {
+                            calories: Math.round(computedTotals.calories),
+                            protein_grams: Math.round(computedTotals.protein),
+                            carbs_grams: Math.round(computedTotals.carbs),
+                            fat_grams: Math.round(computedTotals.fat)
+                        },
                         foods: analysisResult.foods.map(f => ({
                             food_name: f.food_name,
                             estimated_quantity: `${f.amount} ${f.unit}`,
