@@ -9,6 +9,7 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -75,11 +76,74 @@
             const [analysisResult, setAnalysisResult] = useState(null);
             const [recipeText, setRecipeText] = useState("");
             const [isListening, setIsListening] = useState(false);
-            const fileInputRef = useRef(null);
+            
+            const cameraInputRef = useRef(null);
+            const galleryInputRef = useRef(null);
+            const scannerRef = useRef(null);
 
             useEffect(() => { localStorage.setItem('onax_goals', JSON.stringify(dailyGoals)); }, [dailyGoals]);
             useEffect(() => { localStorage.setItem('onax_favs', JSON.stringify(favorites)); }, [favorites]);
             useEffect(() => { localStorage.setItem('onax_history', JSON.stringify(mealsToday)); }, [mealsToday]);
+
+            useEffect(() => {
+                if (activeTab === 'scanner') {
+                    const scanner = new Html5Qrcode("reader");
+                    scannerRef.current = scanner;
+                    scanner.start(
+                        { facingMode: "environment" },
+                        { fps: 10, qrbox: { width: 250, height: 150 } },
+                        async (decodedText) => {
+                            scanner.stop().catch(() => {});
+                            fetchBarcodeData(decodedText);
+                        },
+                        () => {}
+                    ).catch(err => {
+                        alert("Camera permission needed for barcode scanning.");
+                        setActiveTab('home');
+                    });
+                } else {
+                    if (scannerRef.current) {
+                        scannerRef.current.stop().catch(() => {});
+                        scannerRef.current = null;
+                    }
+                }
+            }, [activeTab]);
+
+            const fetchBarcodeData = async (barcode) => {
+                setActiveTab('analysis');
+                setIsAnalyzing(true);
+                try {
+                    const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+                    const data = await res.json();
+                    if (data.status === 1 && data.product) {
+                        const p = data.product;
+                        const nut = p.nutriments || {};
+                        const servingCals = nut['energy-kcal_100g'] || nut['energy-kcal_serving'] || 200;
+                        const servingProt = nut['proteins_100g'] || nut['proteins_serving'] || 5;
+                        const servingCarbs = nut['carbohydrates_100g'] || nut['carbohydrates_serving'] || 20;
+                        const servingFat = nut['fat_100g'] || nut['fat_serving'] || 5;
+
+                        setAnalysisResult({
+                            foods: [{
+                                food_name: p.product_name || "Packaged Item",
+                                unit: 'g',
+                                amount: 100,
+                                unit_calories: servingCals / 100,
+                                unit_protein: servingProt / 100,
+                                unit_carbs: servingCarbs / 100,
+                                unit_fat: servingFat / 100
+                            }]
+                        });
+                    } else {
+                        throw new Error("Product barcode not found in global database.");
+                    }
+                } catch (err) {
+                    alert(err.message);
+                    setActiveTab('home');
+                } finally {
+                    setIsAnalyzing(false);
+                }
+            };
 
             const consumed = mealsToday.reduce((acc, meal) => {
                 acc.calories += meal.meal_totals?.calories || 0; acc.protein += meal.meal_totals?.protein_grams || 0;
@@ -108,40 +172,29 @@
                     if (imageData) payload.contents[0].parts.push({ inlineData: { mimeType: imageData.mimeType, data: imageData.base64 } });
                     
                     const result = await performApiCall(payload, apiKey);
-                    
-                    // Normalize data structure with dynamic units support
                     const formattedFoods = result.foods.map(f => ({
                         food_name: f.food_name,
                         unit: f.unit || 'pieces',
                         amount: f.amount || 1,
-                        // base values stored per single unit (per 1 piece, per 1 ml, or per 1 gram)
                         unit_calories: (f.base_calories || 100) / (f.amount || 1),
                         unit_protein: (f.base_protein || 5) / (f.amount || 1),
                         unit_carbs: (f.base_carbs || 10) / (f.amount || 1),
                         unit_fat: (f.base_fat || 3) / (f.amount || 1)
                     }));
-                    
                     setAnalysisResult({ foods: formattedFoods });
                 } catch (err) { alert(`Error: ${err.message}`); } 
                 finally { setIsAnalyzing(false); }
             };
 
-            // Smart Dynamic Adjuster based on unit type
             const updateFoodAmount = (index, direction) => {
                 if (!analysisResult) return;
                 const updatedFoods = [...analysisResult.foods];
                 const item = updatedFoods[index];
-                
-                let step = 1;
-                if (item.unit === 'ml') step = 100;
-                else if (item.unit === 'g') step = 50;
-                
-                const newAmount = Math.max(step, item.amount + (direction * step));
-                item.amount = newAmount;
+                let step = item.unit === 'ml' ? 100 : item.unit === 'g' ? 50 : 1;
+                item.amount = Math.max(step, item.amount + (direction * step));
                 setAnalysisResult({ ...analysisResult, foods: updatedFoods });
             };
 
-            // Calculate live totals dynamically
             const computedTotals = analysisResult ? analysisResult.foods.reduce((acc, f) => {
                 acc.calories += (f.unit_calories * f.amount);
                 acc.protein += (f.unit_protein * f.amount);
@@ -150,7 +203,7 @@
                 return acc;
             }, { calories: 0, protein: 0, carbs: 0, fat: 0 }) : { calories: 0, protein: 0, carbs: 0, fat: 0 };
 
-            const handleImageCapture = async (e) => {
+            const handleImageSelect = async (e) => {
                 if (!e.target.files?.[0]) return;
                 const compressed = await compressImageToBase64(e.target.files[0]);
                 setSelectedImage(compressed); setActiveTab('analysis'); runAnalysis(compressed, null);
@@ -193,7 +246,6 @@
                 <div className="flex justify-center items-center min-h-screen bg-gray-900 md:p-4">
                     <div className="w-full h-[100dvh] md:h-[850px] max-w-[400px] bg-white md:rounded-[2.5rem] flex flex-col relative overflow-hidden">
                         
-                        {/* SETTINGS MODAL */}
                         {showSettings && (
                             <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
                                 <div className="bg-white rounded-3xl p-6 w-full shadow-2xl">
@@ -228,7 +280,6 @@
 
                         <div className="flex-1 overflow-y-auto pb-24 bg-gray-50">
                             
-                            {/* HOME */}
                             {activeTab === 'home' && (
                                 <div>
                                     <div className="bg-orange-600 text-white p-6 rounded-b-[2rem] relative">
@@ -245,20 +296,34 @@
                                             <div className="mb-2"><span className="text-xs font-bold text-gray-500">CARBS ({Math.round(consumed.carbs)}/{dailyGoals.carbs}g)</span> <div className="h-2 bg-gray-200 rounded-full mt-1"><div className="h-2 bg-green-500 rounded-full" style={{width: `${Math.min(100, consumed.carbs/dailyGoals.carbs*100)}%`}}></div></div></div>
                                             <div className="mb-2"><span className="text-xs font-bold text-gray-500">FAT ({Math.round(consumed.fat)}/{dailyGoals.fat}g)</span> <div className="h-2 bg-gray-200 rounded-full mt-1"><div className="h-2 bg-yellow-500 rounded-full" style={{width: `${Math.min(100, consumed.fat/dailyGoals.fat*100)}%`}}></div></div></div>
                                         </div>
-                                        <div className="flex gap-4">
-                                            <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-orange-600 text-white py-4 rounded-2xl font-bold flex flex-col items-center"><i className="fa-solid fa-camera text-2xl mb-1"></i> Scan</button>
-                                            <button onClick={() => setActiveTab('recipe')} className="flex-1 bg-white text-orange-600 border-2 border-orange-100 py-4 rounded-2xl font-bold flex flex-col items-center"><i className="fa-solid fa-pen text-2xl mb-1"></i> Voice/Text</button>
+                                        
+                                        {/* CAMERA & GALLERY & BARCODE BUTTONS */}
+                                        <div className="grid grid-cols-3 gap-2 mb-3">
+                                            <button onClick={() => cameraInputRef.current?.click()} className="bg-orange-600 text-white py-3 rounded-2xl font-bold flex flex-col items-center shadow text-xs"><i className="fa-solid fa-camera text-lg mb-1"></i> Camera</button>
+                                            <button onClick={() => galleryInputRef.current?.click()} className="bg-amber-600 text-white py-3 rounded-2xl font-bold flex flex-col items-center shadow text-xs"><i className="fa-solid fa-image text-lg mb-1"></i> Gallery</button>
+                                            <button onClick={() => setActiveTab('scanner')} className="bg-gray-900 text-white py-3 rounded-2xl font-bold flex flex-col items-center shadow text-xs"><i className="fa-solid fa-barcode text-lg mb-1"></i> Barcode</button>
                                         </div>
+                                        <button onClick={() => setActiveTab('recipe')} className="w-full bg-white text-orange-600 border-2 border-orange-100 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-sm"><i className="fa-solid fa-pen"></i> Voice / Manual Log</button>
                                     </div>
                                 </div>
                             )}
 
-                            {/* ANALYSIS VIEW WITH SMART UNITS (Pieces, ml, grams) */}
+                            {activeTab === 'scanner' && (
+                                <div className="flex flex-col h-full bg-black">
+                                    <div className="p-4 flex justify-between items-center z-10 bg-black/50">
+                                        <button onClick={() => setActiveTab('home')} className="text-white text-lg"><i className="fa-solid fa-xmark"></i> Close</button>
+                                        <h2 className="text-white font-bold">Scan Product Barcode</h2>
+                                        <div className="w-10"></div>
+                                    </div>
+                                    <div id="reader" className="w-full flex-1"></div>
+                                </div>
+                            )}
+
                             {activeTab === 'analysis' && (
                                 <div className="pb-10">
                                     <div className="bg-white px-4 py-3 shadow-sm flex items-center gap-3 sticky top-0 z-10">
                                         <button onClick={() => setActiveTab('home')} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-700"><i className="fa-solid fa-chevron-left"></i></button>
-                                        <h2 className="font-bold text-lg text-gray-800">Adjust Portions</h2>
+                                        <h2 className="font-bold text-lg text-gray-800">Review & Save</h2>
                                     </div>
 
                                     {selectedImage && (
@@ -271,12 +336,10 @@
                                         {isAnalyzing ? (
                                             <div className="bg-white rounded-3xl p-10 shadow-xl flex flex-col items-center justify-center min-h-[250px]">
                                                 <div className="w-12 h-12 border-4 border-orange-200 border-t-orange-600 rounded-full animate-spin mb-4"></div>
-                                                <p className="font-bold text-gray-800 text-lg">Analyzing your meal...</p>
-                                                <p className="text-xs text-gray-400 mt-1">Detecting liquids, solids & portions</p>
+                                                <p className="font-bold text-gray-800 text-lg">Analyzing food...</p>
                                             </div>
                                         ) : analysisResult && (
                                             <div className="space-y-4">
-                                                {/* Total Calories Card */}
                                                 <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
                                                     <div>
                                                         <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Total Energy</p>
@@ -287,7 +350,6 @@
                                                     </div>
                                                 </div>
 
-                                                {/* Macro Breakdown Cards */}
                                                 <div className="grid grid-cols-3 gap-3">
                                                     <div className="bg-blue-50/70 border border-blue-100 p-3 rounded-2xl text-center">
                                                         <span className="block text-[10px] uppercase font-bold text-blue-500">Protein</span>
@@ -303,7 +365,6 @@
                                                     </div>
                                                 </div>
 
-                                                {/* Food Items with Smart Unit Adjusters */}
                                                 <h4 className="font-bold text-gray-800 mt-6 px-1 text-sm uppercase tracking-wider">Adjust Amounts</h4>
                                                 <div className="space-y-3">
                                                     {analysisResult.foods.map((f, i) => (
@@ -330,7 +391,6 @@
                                 </div>
                             )}
 
-                            {/* RECIPE / VOICE */}
                             {activeTab === 'recipe' && (
                                 <div className="p-6">
                                     <h2 className="text-xl font-bold mb-4">Log Food Manually</h2>
@@ -342,7 +402,6 @@
                                 </div>
                             )}
 
-                            {/* HISTORY & FAVS */}
                             {activeTab === 'history' && (
                                 <div className="p-6">
                                     <h2 className="text-xl font-bold mb-4">History & Favorites</h2>
@@ -357,7 +416,6 @@
                                 </div>
                             )}
 
-                            {/* ANALYTICS */}
                             {activeTab === 'analytics' && (
                                 <div className="p-6">
                                     <h2 className="text-xl font-bold mb-6">Weekly Trends</h2>
@@ -376,17 +434,18 @@
                             )}
                         </div>
 
-                        {/* BOTTOM NAV */}
-                        {activeTab !== 'analysis' && (
-                            <div className="absolute bottom-0 w-full bg-white border-t py-3 px-4 flex justify-between items-center z-40 shadow-lg">
+                        {activeTab !== 'analysis' && activeTab !== 'scanner' && (
+                            <div className="absolute bottom-0 w-full bg-white border-t py-3 px-4 flex justify-around items-center z-40 shadow-lg">
                                 <button onClick={()=>setActiveTab('home')} className={activeTab==='home'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-house text-xl"></i></button>
                                 <button onClick={()=>setActiveTab('analytics')} className={activeTab==='analytics'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-chart-bar text-xl"></i></button>
-                                <button onClick={()=>fileInputRef.current?.click()} className="bg-orange-600 text-white w-14 h-14 rounded-full -mt-8 flex items-center justify-center shadow-lg active:scale-95"><i className="fa-solid fa-camera text-xl"></i></button>
                                 <button onClick={()=>setActiveTab('recipe')} className={activeTab==='recipe'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-microphone text-xl"></i></button>
                                 <button onClick={()=>setActiveTab('history')} className={activeTab==='history'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-clock-rotate-left text-xl"></i></button>
                             </div>
                         )}
-                        <input type="file" accept="image/*" capture="camera" className="hidden" ref={fileInputRef} onChange={handleImageCapture} />
+
+                        {/* SEPARATE INPUTS FOR CAMERA AND GALLERY */}
+                        <input type="file" accept="image/*" capture="camera" className="hidden" ref={cameraInputRef} onChange={handleImageSelect} />
+                        <input type="file" accept="image/*" className="hidden" ref={galleryInputRef} onChange={handleImageSelect} />
                     </div>
                 </div>
             );
