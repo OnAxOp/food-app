@@ -22,7 +22,6 @@
         const { useState, useEffect, useRef } = React;
         const FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash", "gemini-2.5-flash", "gemini-1.5-flash"];
 
-        // Helper functions (Compression & API)
         const compressImageToBase64 = (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader(); reader.readAsDataURL(file);
@@ -63,13 +62,14 @@
         const App = () => {
             const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
             const [tempKey, setTempKey] = useState('');
-            const [activeTab, setActiveTab] = useState('home'); // home, analysis, recipe, history, analytics
+            const [activeTab, setActiveTab] = useState('home');
             
-            // New Features State
-            const [water, setWater] = useState(Number(localStorage.getItem('onax_water')) || 0);
-            const [favorites, setFavorites] = useState(JSON.parse(localStorage.getItem('onax_favs') || '[]'));
+            // Goals & Settings State
             const [dailyGoals, setDailyGoals] = useState(JSON.parse(localStorage.getItem('onax_goals') || '{"calories": 2200, "protein": 65, "carbs": 280, "fat": 60}'));
-            
+            const [showSettings, setShowSettings] = useState(false);
+            const [tempGoals, setTempGoals] = useState(dailyGoals);
+
+            const [favorites, setFavorites] = useState(JSON.parse(localStorage.getItem('onax_favs') || '[]'));
             const [mealsToday, setMealsToday] = useState([]);
             const [selectedImage, setSelectedImage] = useState(null);
             const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -78,9 +78,7 @@
             const [isListening, setIsListening] = useState(false);
             const fileInputRef = useRef(null);
 
-            // Persist Water
-            useEffect(() => { localStorage.setItem('onax_water', water); }, [water]);
-            // Persist Favs
+            useEffect(() => { localStorage.setItem('onax_goals', JSON.stringify(dailyGoals)); }, [dailyGoals]);
             useEffect(() => { localStorage.setItem('onax_favs', JSON.stringify(favorites)); }, [favorites]);
 
             const consumed = mealsToday.reduce((acc, meal) => {
@@ -89,10 +87,9 @@
                 return acc;
             }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
 
-            // Voice Recognition (Web Speech API)
             const startVoice = () => {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) return alert("Voice typing not supported on this device yet.");
+                if (!SpeechRecognition) return alert("Voice typing not supported on this device.");
                 const recognition = new SpeechRecognition();
                 recognition.onstart = () => setIsListening(true);
                 recognition.onresult = (e) => setRecipeText(prev => prev + " " + e.results[0][0].transcript);
@@ -146,28 +143,59 @@
 
             return (
                 <div className="flex justify-center items-center min-h-screen bg-gray-900 md:p-4">
-                    <div className="w-full h-[100dvh] md:h-[850px] max-w-[400px] bg-white md:rounded-[2.5rem] flex flex-col relative">
+                    <div className="w-full h-[100dvh] md:h-[850px] max-w-[400px] bg-white md:rounded-[2.5rem] flex flex-col relative overflow-hidden">
                         
-                        {/* MAIN CONTENT AREA */}
+                        {/* GOALS SETTINGS MODAL */}
+                        {showSettings && (
+                            <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                                <div className="bg-white rounded-3xl p-6 w-full shadow-2xl">
+                                    <h3 className="font-bold text-xl mb-4 text-gray-800">Custom Goals</h3>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="text-xs text-gray-500 font-bold uppercase">Calories (kcal)</label>
+                                            <input type="number" className="w-full border-b-2 border-orange-200 outline-none py-2 text-lg font-semibold" value={tempGoals.calories} onChange={e => setTempGoals({...tempGoals, calories: Number(e.target.value)})} />
+                                        </div>
+                                        <div className="flex gap-4">
+                                            <div className="flex-1">
+                                                <label className="text-xs text-gray-500 font-bold uppercase">Protein (g)</label>
+                                                <input type="number" className="w-full border-b-2 border-orange-200 outline-none py-2 text-lg font-semibold" value={tempGoals.protein} onChange={e => setTempGoals({...tempGoals, protein: Number(e.target.value)})} />
+                                            </div>
+                                            <div className="flex-1">
+                                                <label className="text-xs text-gray-500 font-bold uppercase">Carbs (g)</label>
+                                                <input type="number" className="w-full border-b-2 border-orange-200 outline-none py-2 text-lg font-semibold" value={tempGoals.carbs} onChange={e => setTempGoals({...tempGoals, carbs: Number(e.target.value)})} />
+                                            </div>
+                                            <div className="flex-1">
+                                                <label className="text-xs text-gray-500 font-bold uppercase">Fat (g)</label>
+                                                <input type="number" className="w-full border-b-2 border-orange-200 outline-none py-2 text-lg font-semibold" value={tempGoals.fat} onChange={e => setTempGoals({...tempGoals, fat: Number(e.target.value)})} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-3 mt-8">
+                                        <button onClick={() => setShowSettings(false)} className="flex-1 py-3 rounded-xl font-bold bg-gray-100 text-gray-500">Cancel</button>
+                                        <button onClick={() => { setDailyGoals(tempGoals); setShowSettings(false); }} className="flex-1 py-3 rounded-xl font-bold bg-orange-600 text-white shadow">Save</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex-1 overflow-y-auto pb-24 bg-gray-50">
                             
                             {/* HOME */}
                             {activeTab === 'home' && (
                                 <div>
-                                    <div className="bg-orange-600 text-white p-6 rounded-b-[2rem]">
+                                    <div className="bg-orange-600 text-white p-6 rounded-b-[2rem] relative">
+                                        <button onClick={() => { setTempGoals(dailyGoals); setShowSettings(true); }} className="absolute top-6 right-6 text-orange-200 text-xl"><i className="fa-solid fa-gear"></i></button>
                                         <h1 className="text-2xl font-bold">Today's Progress</h1>
                                         <div className="flex justify-between mt-4">
                                             <div><p className="text-sm">Calories Left</p><p className="text-3xl font-bold">{Math.max(0, dailyGoals.calories - consumed.calories)}</p></div>
-                                            <div className="text-right"><p className="text-sm">Water (250ml)</p>
-                                                <button onClick={() => setWater(water + 1)} className="bg-blue-500 px-4 py-1 rounded-full font-bold mt-1 shadow active:scale-95"><i className="fa-solid fa-droplet mr-1"></i> {water}</button>
-                                            </div>
+                                            <div className="text-right"><p className="text-sm">Consumed</p><p className="text-xl font-semibold">{Math.round(consumed.calories)} kcal</p></div>
                                         </div>
                                     </div>
                                     <div className="p-6">
                                         <div className="bg-white p-5 rounded-2xl shadow-sm mb-6">
-                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">PROTEIN</span> <div className="h-2 bg-gray-200 rounded-full"><div className="h-2 bg-blue-500 rounded-full" style={{width: `${Math.min(100, consumed.protein/dailyGoals.protein*100)}%`}}></div></div></div>
-                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">CARBS</span> <div className="h-2 bg-gray-200 rounded-full"><div className="h-2 bg-green-500 rounded-full" style={{width: `${Math.min(100, consumed.carbs/dailyGoals.carbs*100)}%`}}></div></div></div>
-                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">FAT</span> <div className="h-2 bg-gray-200 rounded-full"><div className="h-2 bg-yellow-500 rounded-full" style={{width: `${Math.min(100, consumed.fat/dailyGoals.fat*100)}%`}}></div></div></div>
+                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">PROTEIN ({Math.round(consumed.protein)}/{dailyGoals.protein}g)</span> <div className="h-2 bg-gray-200 rounded-full mt-1"><div className="h-2 bg-blue-500 rounded-full" style={{width: `${Math.min(100, consumed.protein/dailyGoals.protein*100)}%`}}></div></div></div>
+                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">CARBS ({Math.round(consumed.carbs)}/{dailyGoals.carbs}g)</span> <div className="h-2 bg-gray-200 rounded-full mt-1"><div className="h-2 bg-green-500 rounded-full" style={{width: `${Math.min(100, consumed.carbs/dailyGoals.carbs*100)}%`}}></div></div></div>
+                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">FAT ({Math.round(consumed.fat)}/{dailyGoals.fat}g)</span> <div className="h-2 bg-gray-200 rounded-full mt-1"><div className="h-2 bg-yellow-500 rounded-full" style={{width: `${Math.min(100, consumed.fat/dailyGoals.fat*100)}%`}}></div></div></div>
                                         </div>
                                         <div className="flex gap-4">
                                             <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-orange-600 text-white py-4 rounded-2xl font-bold flex flex-col items-center"><i className="fa-solid fa-camera text-2xl mb-1"></i> Scan</button>
@@ -196,10 +224,10 @@
                             {/* RECIPE / VOICE */}
                             {activeTab === 'recipe' && (
                                 <div className="p-6">
-                                    <h2 className="text-xl font-bold mb-4">Log Food manually</h2>
+                                    <h2 className="text-xl font-bold mb-4">Log Food Manually</h2>
                                     <div className="relative">
-                                        <textarea className="w-full h-40 p-4 bg-white rounded-xl border" placeholder="e.g. 2 parathas with curd..." value={recipeText} onChange={e=>setRecipeText(e.target.value)}></textarea>
-                                        <button onClick={startVoice} className={`absolute bottom-4 right-4 w-10 h-10 rounded-full text-white ${isListening ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`}><i className="fa-solid fa-microphone"></i></button>
+                                        <textarea className="w-full h-40 p-4 bg-white rounded-xl border outline-none" placeholder="e.g. 2 parathas with curd..." value={recipeText} onChange={e=>setRecipeText(e.target.value)}></textarea>
+                                        <button onClick={startVoice} className={`absolute bottom-4 right-4 w-10 h-10 rounded-full text-white shadow ${isListening ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`}><i className="fa-solid fa-microphone"></i></button>
                                     </div>
                                     <button onClick={() => {setActiveTab('analysis'); runAnalysis(null, recipeText);}} className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold mt-4">Analyze</button>
                                 </div>
@@ -209,7 +237,8 @@
                             {activeTab === 'history' && (
                                 <div className="p-6">
                                     <h2 className="text-xl font-bold mb-4">History & Favorites</h2>
-                                    {mealsToday.map(m => (
+                                    {mealsToday.length === 0 ? <p className="text-gray-400 text-center mt-10">No meals tracked today.</p> : 
+                                    mealsToday.map(m => (
                                         <div key={m.id} className="bg-white p-4 rounded-xl shadow-sm mb-3 flex justify-between items-center">
                                             <div><p className="font-bold">{m.foods.map(f=>f.food_name).join(', ')}</p><p className="text-sm text-gray-500">{m.meal_totals.calories} kcal</p></div>
                                             <button onClick={() => toggleFav(m)} className={`text-xl ${favorites.find(f=>f.id===m.id) ? 'text-yellow-400' : 'text-gray-300'}`}><i className="fa-solid fa-star"></i></button>
@@ -223,23 +252,22 @@
                                 <div className="p-6">
                                     <h2 className="text-xl font-bold mb-6">Weekly Trends</h2>
                                     <div className="bg-white p-6 rounded-2xl shadow-sm flex items-end justify-between h-48">
-                                        {/* Mock 7-day bars for demonstration */}
                                         {[60, 80, 40, 90, 75, 50, Math.min(100, consumed.calories/dailyGoals.calories*100)].map((h, i) => (
-                                            <div key={i} className="w-8 bg-orange-200 rounded-t-md relative group">
-                                                <div className="absolute bottom-0 w-full bg-orange-600 rounded-t-md" style={{height: `${h}%`}}></div>
+                                            <div key={i} className="w-8 bg-orange-200 rounded-t-md relative h-full flex items-end">
+                                                <div className="w-full bg-orange-600 rounded-t-md" style={{height: `${h}%`}}></div>
                                             </div>
                                         ))}
                                     </div>
-                                    <p className="text-center text-sm text-gray-500 mt-4">7-Day Calorie Average</p>
+                                    <p className="text-center text-sm text-gray-500 mt-4">7-Day Calorie Average Progress</p>
                                 </div>
                             )}
                         </div>
 
                         {/* BOTTOM NAV */}
-                        <div className="absolute bottom-0 w-full bg-white border-t py-3 px-4 flex justify-between items-center z-50">
+                        <div className="absolute bottom-0 w-full bg-white border-t py-3 px-4 flex justify-between items-center z-40 shadow-lg">
                             <button onClick={()=>setActiveTab('home')} className={activeTab==='home'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-house text-xl"></i></button>
                             <button onClick={()=>setActiveTab('analytics')} className={activeTab==='analytics'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-chart-bar text-xl"></i></button>
-                            <button onClick={()=>fileInputRef.current?.click()} className="bg-orange-600 text-white w-14 h-14 rounded-full -mt-8 flex items-center justify-center shadow-lg"><i className="fa-solid fa-camera text-xl"></i></button>
+                            <button onClick={()=>fileInputRef.current?.click()} className="bg-orange-600 text-white w-14 h-14 rounded-full -mt-8 flex items-center justify-center shadow-lg active:scale-95"><i className="fa-solid fa-camera text-xl"></i></button>
                             <button onClick={()=>setActiveTab('recipe')} className={activeTab==='recipe'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-microphone text-xl"></i></button>
                             <button onClick={()=>setActiveTab('history')} className={activeTab==='history'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-clock-rotate-left text-xl"></i></button>
                         </div>
