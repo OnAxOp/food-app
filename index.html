@@ -9,7 +9,6 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -79,71 +78,10 @@
             
             const cameraInputRef = useRef(null);
             const galleryInputRef = useRef(null);
-            const scannerRef = useRef(null);
 
             useEffect(() => { localStorage.setItem('onax_goals', JSON.stringify(dailyGoals)); }, [dailyGoals]);
             useEffect(() => { localStorage.setItem('onax_favs', JSON.stringify(favorites)); }, [favorites]);
             useEffect(() => { localStorage.setItem('onax_history', JSON.stringify(mealsToday)); }, [mealsToday]);
-
-            useEffect(() => {
-                if (activeTab === 'scanner') {
-                    const scanner = new Html5Qrcode("reader");
-                    scannerRef.current = scanner;
-                    scanner.start(
-                        { facingMode: "environment" },
-                        { fps: 10, qrbox: { width: 250, height: 150 } },
-                        async (decodedText) => {
-                            scanner.stop().catch(() => {});
-                            fetchBarcodeData(decodedText);
-                        },
-                        () => {}
-                    ).catch(err => {
-                        alert("Camera permission needed for barcode scanning.");
-                        setActiveTab('home');
-                    });
-                } else {
-                    if (scannerRef.current) {
-                        scannerRef.current.stop().catch(() => {});
-                        scannerRef.current = null;
-                    }
-                }
-            }, [activeTab]);
-
-            const fetchBarcodeData = async (barcode) => {
-                setActiveTab('analysis');
-                setIsAnalyzing(true);
-                try {
-                    const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
-                    const data = await res.json();
-                    if (data.status === 1 && data.product) {
-                        const p = data.product;
-                        const nut = p.nutriments || {};
-                        const servingCals = nut['energy-kcal_100g'] || nut['energy-kcal_serving'] || 200;
-                        const servingProt = nut['proteins_100g'] || nut['proteins_serving'] || 5;
-                        const servingCarbs = nut['carbohydrates_100g'] || nut['carbohydrates_serving'] || 20;
-                        const servingFat = nut['fat_100g'] || nut['fat_serving'] || 5;
-
-                        setAnalysisResult({
-                            foods: [{
-                                food_name: p.product_name || "Packaged Item",
-                                unit: 'g',
-                                amount: 100,
-                                unit_calories: servingCals / 100,
-                                unit_protein: servingProt / 100,
-                                unit_carbs: servingCarbs / 100,
-                                unit_fat: servingFat / 100
-                            }]
-                        });
-                    } else {
-                        throw new Error("Product barcode not found in global database.");
-                    }
-                } catch (err) {
-                    alert(err.message);
-                    setActiveTab('home');
-                } finally {
-                    setIsAnalyzing(false);
-                }
-            };
 
             const consumed = mealsToday.reduce((acc, meal) => {
                 acc.calories += meal.meal_totals?.calories || 0; acc.protein += meal.meal_totals?.protein_grams || 0;
@@ -165,7 +103,7 @@
                 setIsAnalyzing(true);
                 try {
                     const prompt = imageData ? 
-                        `Analyze this image of Indian food. Determine if each item is counted (pieces), in milliliters (ml), or in grams (g). JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number},"foods":[{"food_name":"string","unit":"pieces|ml|g","amount":number,"base_calories":number,"base_protein":number,"base_carbs":number,"base_fat":number}]}` : 
+                        `Analyze this image of food or product packaging/barcode. Determine if each item is counted (pieces), in milliliters (ml), or in grams (g). JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number},"foods":[{"food_name":"string","unit":"pieces|ml|g","amount":number,"base_calories":number,"base_protein":number,"base_carbs":number,"base_fat":number}]}` : 
                         `Analyze this Indian recipe: "${textData}". JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number},"foods":[{"food_name":"string","unit":"pieces|ml|g","amount":number,"base_calories":number,"base_protein":number,"base_carbs":number,"base_fat":number}]}`;
                     
                     const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } };
@@ -297,25 +235,13 @@
                                             <div className="mb-2"><span className="text-xs font-bold text-gray-500">FAT ({Math.round(consumed.fat)}/{dailyGoals.fat}g)</span> <div className="h-2 bg-gray-200 rounded-full mt-1"><div className="h-2 bg-yellow-500 rounded-full" style={{width: `${Math.min(100, consumed.fat/dailyGoals.fat*100)}%`}}></div></div></div>
                                         </div>
                                         
-                                        {/* CAMERA & GALLERY & BARCODE BUTTONS */}
-                                        <div className="grid grid-cols-3 gap-2 mb-3">
-                                            <button onClick={() => cameraInputRef.current?.click()} className="bg-orange-600 text-white py-3 rounded-2xl font-bold flex flex-col items-center shadow text-xs"><i className="fa-solid fa-camera text-lg mb-1"></i> Camera</button>
-                                            <button onClick={() => galleryInputRef.current?.click()} className="bg-amber-600 text-white py-3 rounded-2xl font-bold flex flex-col items-center shadow text-xs"><i className="fa-solid fa-image text-lg mb-1"></i> Gallery</button>
-                                            <button onClick={() => setActiveTab('scanner')} className="bg-gray-900 text-white py-3 rounded-2xl font-bold flex flex-col items-center shadow text-xs"><i className="fa-solid fa-barcode text-lg mb-1"></i> Barcode</button>
+                                        {/* CAMERA & GALLERY BUTTONS (NO FREEZING BARCODE SCANNER) */}
+                                        <div className="grid grid-cols-2 gap-3 mb-3">
+                                            <button onClick={() => cameraInputRef.current?.click()} className="bg-orange-600 text-white py-4 rounded-2xl font-bold flex flex-col items-center shadow"><i className="fa-solid fa-camera text-xl mb-1"></i> Camera Scan</button>
+                                            <button onClick={() => galleryInputRef.current?.click()} className="bg-amber-600 text-white py-4 rounded-2xl font-bold flex flex-col items-center shadow"><i className="fa-solid fa-image text-xl mb-1"></i> Gallery Upload</button>
                                         </div>
                                         <button onClick={() => setActiveTab('recipe')} className="w-full bg-white text-orange-600 border-2 border-orange-100 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-sm"><i className="fa-solid fa-pen"></i> Voice / Manual Log</button>
                                     </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'scanner' && (
-                                <div className="flex flex-col h-full bg-black">
-                                    <div className="p-4 flex justify-between items-center z-10 bg-black/50">
-                                        <button onClick={() => setActiveTab('home')} className="text-white text-lg"><i className="fa-solid fa-xmark"></i> Close</button>
-                                        <h2 className="text-white font-bold">Scan Product Barcode</h2>
-                                        <div className="w-10"></div>
-                                    </div>
-                                    <div id="reader" className="w-full flex-1"></div>
                                 </div>
                             )}
 
@@ -434,7 +360,7 @@
                             )}
                         </div>
 
-                        {activeTab !== 'analysis' && activeTab !== 'scanner' && (
+                        {activeTab !== 'analysis' && (
                             <div className="absolute bottom-0 w-full bg-white border-t py-3 px-4 flex justify-around items-center z-40 shadow-lg">
                                 <button onClick={()=>setActiveTab('home')} className={activeTab==='home'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-house text-xl"></i></button>
                                 <button onClick={()=>setActiveTab('analytics')} className={activeTab==='analytics'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-chart-bar text-xl"></i></button>
@@ -443,7 +369,6 @@
                             </div>
                         )}
 
-                        {/* SEPARATE INPUTS FOR CAMERA AND GALLERY */}
                         <input type="file" accept="image/*" capture="camera" className="hidden" ref={cameraInputRef} onChange={handleImageSelect} />
                         <input type="file" accept="image/*" className="hidden" ref={galleryInputRef} onChange={handleImageSelect} />
                     </div>
