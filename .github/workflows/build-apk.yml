@@ -1,0 +1,46 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java for Android
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup App Environment
+        run: |
+          echo '{"name":"desinutri","version":"1.0.0","description":"","main":"index.js","scripts":{},"author":"","license":"ISC"}' > package.json
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+
+      - name: Initialize Android App
+        run: |
+          npx cap init DesiNutri com.desinutri.app --web-dir .
+          npx cap add android
+          npx cap sync android
+
+      - name: Build the APK
+        run: |
+          cd android
+          ./gradlew assembleDebug
+
+      - name: Upload APK for Download
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesiNutri-App-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
