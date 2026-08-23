@@ -99,29 +99,63 @@
                 recognition.start();
             };
 
-            const runAnalysis = async (imageData, textData) => {
+            // SEPARATED IMAGE ANALYSIS
+            const runImageAnalysis = async (imageData) => {
                 setIsAnalyzing(true);
+                setSelectedImage(imageData);
+                setActiveTab('analysis');
                 try {
-                    const prompt = imageData ? 
-                        `Analyze this image of food or product packaging/barcode. Determine if each item is counted (pieces), in milliliters (ml), or in grams (g). JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number},"foods":[{"food_name":"string","unit":"pieces|ml|g","amount":number,"base_calories":number,"base_protein":number,"base_carbs":number,"base_fat":number}]}` : 
-                        `Analyze this Indian recipe: "${textData}". JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number},"foods":[{"food_name":"string","unit":"pieces|ml|g","amount":number,"base_calories":number,"base_protein":number,"base_carbs":number,"base_fat":number}]}`;
-                    
-                    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } };
-                    if (imageData) payload.contents[0].parts.push({ inlineData: { mimeType: imageData.mimeType, data: imageData.base64 } });
+                    const prompt = `Analyze this image of food or product packaging. Determine if each item is counted (pieces), in milliliters (ml), or in grams (g). JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number},"foods":[{"food_name":"string","unit":"pieces|ml|g","amount":number,"base_calories":number,"base_protein":number,"base_carbs":number,"base_fat":number}]}`;
+                    const payload = { 
+                        contents: [{ 
+                            role: "user", 
+                            parts: [
+                                { text: prompt }, 
+                                { inlineData: { mimeType: imageData.mimeType, data: imageData.base64 } }
+                            ] 
+                        }], 
+                        generationConfig: { responseMimeType: "application/json" } 
+                    };
                     
                     const result = await performApiCall(payload, apiKey);
-                    const formattedFoods = result.foods.map(f => ({
-                        food_name: f.food_name,
-                        unit: f.unit || 'pieces',
-                        amount: f.amount || 1,
-                        unit_calories: (f.base_calories || 100) / (f.amount || 1),
-                        unit_protein: (f.base_protein || 5) / (f.amount || 1),
-                        unit_carbs: (f.base_carbs || 10) / (f.amount || 1),
-                        unit_fat: (f.base_fat || 3) / (f.amount || 1)
-                    }));
-                    setAnalysisResult({ foods: formattedFoods });
-                } catch (err) { alert(`Error: ${err.message}`); } 
+                    formatAndSetResult(result);
+                } catch (err) { alert(`Error: ${err.message}`); setActiveTab('home'); } 
                 finally { setIsAnalyzing(false); }
+            };
+
+            // SEPARATED TEXT/RECIPE ANALYSIS (CLEARS IMAGE COMPLETELY)
+            const runTextAnalysis = async (textData) => {
+                if (!textData.trim()) return;
+                setIsAnalyzing(true);
+                setSelectedImage(null); // Clear any old image!
+                setActiveTab('analysis');
+                try {
+                    const prompt = `Analyze this Indian recipe or food description: "${textData}". Determine if each item is counted (pieces), in milliliters (ml), or in grams (g). JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number},"foods":[{"food_name":"string","unit":"pieces|ml|g","amount":number,"base_calories":number,"base_protein":number,"base_carbs":number,"base_fat":number}]}`;
+                    const payload = { 
+                        contents: [{ 
+                            role: "user", 
+                            parts: [{ text: prompt }] 
+                        }], 
+                        generationConfig: { responseMimeType: "application/json" } 
+                    };
+                    
+                    const result = await performApiCall(payload, apiKey);
+                    formatAndSetResult(result);
+                } catch (err) { alert(`Error: ${err.message}`); setActiveTab('home'); } 
+                finally { setIsAnalyzing(false); }
+            };
+
+            const formatAndSetResult = (result) => {
+                const formattedFoods = result.foods.map(f => ({
+                    food_name: f.food_name,
+                    unit: f.unit || 'pieces',
+                    amount: f.amount || 1,
+                    unit_calories: (f.base_calories || 100) / (f.amount || 1),
+                    unit_protein: (f.base_protein || 5) / (f.amount || 1),
+                    unit_carbs: (f.base_carbs || 10) / (f.amount || 1),
+                    unit_fat: (f.base_fat || 3) / (f.amount || 1)
+                }));
+                setAnalysisResult({ foods: formattedFoods });
             };
 
             const updateFoodAmount = (index, direction) => {
@@ -144,7 +178,7 @@
             const handleImageSelect = async (e) => {
                 if (!e.target.files?.[0]) return;
                 const compressed = await compressImageToBase64(e.target.files[0]);
-                setSelectedImage(compressed); setActiveTab('analysis'); runAnalysis(compressed, null);
+                runImageAnalysis(compressed);
             };
 
             const saveMeal = () => {
@@ -161,7 +195,7 @@
                         }))
                     };
                     setMealsToday([finalMeal, ...mealsToday]);
-                    setActiveTab('home'); setAnalysisResult(null); setSelectedImage(null);
+                    setActiveTab('home'); setAnalysisResult(null); setSelectedImage(null); setRecipeText("");
                 }
             };
 
@@ -235,7 +269,6 @@
                                             <div className="mb-2"><span className="text-xs font-bold text-gray-500">FAT ({Math.round(consumed.fat)}/{dailyGoals.fat}g)</span> <div className="h-2 bg-gray-200 rounded-full mt-1"><div className="h-2 bg-yellow-500 rounded-full" style={{width: `${Math.min(100, consumed.fat/dailyGoals.fat*100)}%`}}></div></div></div>
                                         </div>
                                         
-                                        {/* CAMERA & GALLERY BUTTONS (NO FREEZING BARCODE SCANNER) */}
                                         <div className="grid grid-cols-2 gap-3 mb-3">
                                             <button onClick={() => cameraInputRef.current?.click()} className="bg-orange-600 text-white py-4 rounded-2xl font-bold flex flex-col items-center shadow"><i className="fa-solid fa-camera text-xl mb-1"></i> Camera Scan</button>
                                             <button onClick={() => galleryInputRef.current?.click()} className="bg-amber-600 text-white py-4 rounded-2xl font-bold flex flex-col items-center shadow"><i className="fa-solid fa-image text-xl mb-1"></i> Gallery Upload</button>
@@ -248,7 +281,7 @@
                             {activeTab === 'analysis' && (
                                 <div className="pb-10">
                                     <div className="bg-white px-4 py-3 shadow-sm flex items-center gap-3 sticky top-0 z-10">
-                                        <button onClick={() => setActiveTab('home')} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-700"><i className="fa-solid fa-chevron-left"></i></button>
+                                        <button onClick={() => { setActiveTab('home'); setSelectedImage(null); }} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-700"><i className="fa-solid fa-chevron-left"></i></button>
                                         <h2 className="font-bold text-lg text-gray-800">Review & Save</h2>
                                     </div>
 
@@ -324,7 +357,7 @@
                                         <textarea className="w-full h-40 p-4 bg-white rounded-xl border outline-none" placeholder="e.g. 250ml milk and 2 boiled eggs..." value={recipeText} onChange={e=>setRecipeText(e.target.value)}></textarea>
                                         <button onClick={startVoice} className={`absolute bottom-4 right-4 w-10 h-10 rounded-full text-white shadow ${isListening ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`}><i className="fa-solid fa-microphone"></i></button>
                                     </div>
-                                    <button onClick={() => {setActiveTab('analysis'); runAnalysis(null, recipeText);}} className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold mt-4">Analyze</button>
+                                    <button onClick={() => runTextAnalysis(recipeText)} className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold mt-4">Analyze Text</button>
                                 </div>
                             )}
 
