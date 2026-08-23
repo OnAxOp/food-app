@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DesiNutri AI</title>
+    <title>DesiNutri</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -20,363 +20,235 @@
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-        
-        // Hardcoded to use Gemini 3.5 Flash as requested!
-        const FALLBACK_MODELS = [
-            "gemini-3.5-flash",
-            "gemini-3.1-flash",
-            "gemini-2.5-flash",
-            "gemini-1.5-flash"
-        ];
+        const FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash", "gemini-2.5-flash", "gemini-1.5-flash"];
 
+        // Helper functions (Compression & API)
         const compressImageToBase64 = (file) => {
             return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = (event) => {
-                    const img = new Image();
-                    img.src = event.target.result;
+                const reader = new FileReader(); reader.readAsDataURL(file);
+                reader.onload = (e) => {
+                    const img = new Image(); img.src = e.target.result;
                     img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        const MAX_SIZE = 800; 
-                        let width = img.width;
-                        let height = img.height;
-                        if (width > height && width > MAX_SIZE) {
-                            height *= MAX_SIZE / width;
-                            width = MAX_SIZE;
-                        } else if (height > MAX_SIZE) {
-                            width *= MAX_SIZE / height;
-                            height = MAX_SIZE;
-                        }
-                        canvas.width = width;
-                        canvas.height = height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, width, height);
-                        const dataUrl = canvas.toDataURL('image/jpeg', 0.7); 
-                        resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg', url: dataUrl });
+                        const canvas = document.createElement('canvas'); const MAX = 800;
+                        let w = img.width, h = img.height;
+                        if (w > h && w > MAX) { h *= MAX / w; w = MAX; } 
+                        else if (h > MAX) { w *= MAX / h; h = MAX; }
+                        canvas.width = w; canvas.height = h;
+                        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                        const url = canvas.toDataURL('image/jpeg', 0.7); 
+                        resolve({ base64: url.split(',')[1], mimeType: 'image/jpeg', url });
                     };
-                };
-                reader.onerror = (error) => reject(error);
+                }; reader.onerror = reject;
             });
         };
 
         const performApiCall = async (payload, apiKey) => {
-            let lastError = "";
-            
             for (const model of FALLBACK_MODELS) {
-                const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
                 try {
-                    const response = await fetch(API_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
+                    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
                     });
-                    
-                    if (!response.ok) {
-                        const errData = await response.text();
-                        if (response.status === 404) {
-                            lastError = `404 Not Found`;
-                            continue; // Silently try the next model
-                        }
-                        throw new Error(`Google API Error ${response.status}: ${errData}`);
-                    }
-                    
-                    const data = await response.json();
+                    if (!res.ok) { if (res.status === 404) continue; throw new Error(`API Error ${res.status}`); }
+                    const data = await res.json();
                     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (!text) throw new Error("Empty response from Google AI");
-                    
-                    // Bulletproof JSON extractor
-                    let cleanText = text.trim();
-                    const jsonStart = cleanText.indexOf('{');
-                    const jsonEnd = cleanText.lastIndexOf('}');
-                    
-                    if (jsonStart !== -1 && jsonEnd !== -1) {
-                        cleanText = cleanText.substring(jsonStart, jsonEnd + 1);
-                    }
-                    
-                    return JSON.parse(cleanText);
-                    
-                } catch (error) {
-                    if (error.message.includes("404") || error.message.includes("Unexpected token")) {
-                        lastError = error.message;
-                        continue; 
-                    }
-                    throw error; // Throw real errors (like 403 API Key Invalid)
-                }
+                    let clean = text.trim();
+                    const start = clean.indexOf('{'), end = clean.lastIndexOf('}');
+                    if (start !== -1 && end !== -1) clean = clean.substring(start, end + 1);
+                    return JSON.parse(clean);
+                } catch (e) { if (e.message.includes("404")) continue; throw e; }
             }
-            throw new Error(`Your API Key does not have access to standard Gemini Models. Please check Google AI Studio.`);
-        };
-
-        const callGeminiVision = async (base64Image, mimeType, additionalContext, apiKey) => {
-            const prompt = `You are an expert Indian nutritionist. Analyze this image. Identify food, separate mixed foods, estimate portions. Account for hidden calories (oil/ghee). Be honest about uncertainty. Respond ONLY with valid JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number,"fiber_grams":number},"foods":[{"food_name":"string","regional_variant":"string","estimated_quantity":"string","estimated_weight_grams":number,"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number,"confidence":"High|Medium|Low","assumptions":["string"],"follow_up_questions":["string"]}],"overall_confidence":"High|Medium|Low"} ${additionalContext ? `CONTEXT: ${additionalContext}` : ''}`;
-            const payload = { contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: base64Image } }] }], generationConfig: { responseMimeType: "application/json" } };
-            return performApiCall(payload, apiKey);
-        };
-
-        const callGeminiText = async (textPrompt, apiKey) => {
-            const prompt = `You are an Indian nutritionist. Analyze recipe: "${textPrompt}". Respond ONLY with valid JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number,"fiber_grams":number},"foods":[{"food_name":"string","estimated_quantity":"string","estimated_weight_grams":number,"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number,"confidence":"High","assumptions":["string"],"follow_up_questions":[]}],"overall_confidence":"High"}`;
-            const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } };
-            return performApiCall(payload, apiKey);
-        };
-
-        const ProgressBar = ({ label, value, max, colorClass }) => {
-            const percentage = Math.min(100, Math.max(0, (value / max) * 100));
-            return (
-                <div className="mb-3">
-                    <div className="flex justify-between text-xs mb-1"><span className="font-medium text-gray-700">{label}</span><span className="text-gray-500">{Math.round(value)} / {max}g</span></div>
-                    <div className="w-full bg-gray-200 rounded-full h-2"><div className={`h-2 rounded-full ${colorClass}`} style={{ width: `${percentage}%` }}></div></div>
-                </div>
-            );
-        };
-
-        const ConfidenceBadge = ({ level }) => {
-            const colors = { High: "bg-green-100 text-green-700 border-green-200", Medium: "bg-yellow-100 text-yellow-700 border-yellow-200", Low: "bg-red-100 text-red-700 border-red-200" };
-            return <span className={`text-[10px] px-2 py-0.5 rounded-full border ${colors[level] || colors.Medium}`}>{level} Confidence</span>;
+            throw new Error(`API Key access denied.`);
         };
 
         const App = () => {
             const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
             const [tempKey, setTempKey] = useState('');
-            const [activeTab, setActiveTab] = useState('home');
-            const [dailyGoals] = useState({ calories: 2200, protein: 65, carbs: 280, fat: 60 });
-            const [mealsToday, setMealsToday] = useState([]);
+            const [activeTab, setActiveTab] = useState('home'); // home, analysis, recipe, history, analytics
             
+            // New Features State
+            const [water, setWater] = useState(Number(localStorage.getItem('onax_water')) || 0);
+            const [favorites, setFavorites] = useState(JSON.parse(localStorage.getItem('onax_favs') || '[]'));
+            const [dailyGoals, setDailyGoals] = useState(JSON.parse(localStorage.getItem('onax_goals') || '{"calories": 2200, "protein": 65, "carbs": 280, "fat": 60}'));
+            
+            const [mealsToday, setMealsToday] = useState([]);
             const [selectedImage, setSelectedImage] = useState(null);
             const [isAnalyzing, setIsAnalyzing] = useState(false);
             const [analysisResult, setAnalysisResult] = useState(null);
-            const [error, setError] = useState(null);
-            const [userContext, setUserContext] = useState("");
-            
             const [recipeText, setRecipeText] = useState("");
+            const [isListening, setIsListening] = useState(false);
             const fileInputRef = useRef(null);
 
-            const handleSaveKey = () => {
-                if(tempKey.trim().length > 10) {
-                    localStorage.setItem('gemini_api_key', tempKey.trim());
-                    setApiKey(tempKey.trim());
-                }
-            };
-
-            const handleLogout = () => {
-                localStorage.removeItem('gemini_api_key');
-                setApiKey('');
-            };
+            // Persist Water
+            useEffect(() => { localStorage.setItem('onax_water', water); }, [water]);
+            // Persist Favs
+            useEffect(() => { localStorage.setItem('onax_favs', JSON.stringify(favorites)); }, [favorites]);
 
             const consumed = mealsToday.reduce((acc, meal) => {
-                acc.calories += meal.meal_totals?.calories || 0;
-                acc.protein += meal.meal_totals?.protein_grams || 0;
-                acc.carbs += meal.meal_totals?.carbs_grams || 0;
-                acc.fat += meal.meal_totals?.fat_grams || 0;
+                acc.calories += meal.meal_totals?.calories || 0; acc.protein += meal.meal_totals?.protein_grams || 0;
+                acc.carbs += meal.meal_totals?.carbs_grams || 0; acc.fat += meal.meal_totals?.fat_grams || 0;
                 return acc;
             }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
 
+            // Voice Recognition (Web Speech API)
+            const startVoice = () => {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) return alert("Voice typing not supported on this device yet.");
+                const recognition = new SpeechRecognition();
+                recognition.onstart = () => setIsListening(true);
+                recognition.onresult = (e) => setRecipeText(prev => prev + " " + e.results[0][0].transcript);
+                recognition.onend = () => setIsListening(false);
+                recognition.start();
+            };
+
+            const runAnalysis = async (imageData, textData) => {
+                setIsAnalyzing(true);
+                try {
+                    const prompt = imageData ? 
+                        `Analyze this image of Indian food. JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number,"fiber_grams":number},"foods":[{"food_name":"string","estimated_quantity":"string","calories":number,"confidence":"High"}]}` : 
+                        `Analyze this Indian recipe: "${textData}". JSON schema: {"meal_totals":{"calories":number,"protein_grams":number,"carbs_grams":number,"fat_grams":number,"fiber_grams":number},"foods":[{"food_name":"string","estimated_quantity":"string","calories":number,"confidence":"High"}]}`;
+                    
+                    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } };
+                    if (imageData) payload.contents[0].parts.push({ inlineData: { mimeType: imageData.mimeType, data: imageData.base64 } });
+                    
+                    const result = await performApiCall(payload, apiKey);
+                    setAnalysisResult(result);
+                } catch (err) { alert(`Error: ${err.message}`); } 
+                finally { setIsAnalyzing(false); }
+            };
+
             const handleImageCapture = async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                try {
-                    const compressedData = await compressImageToBase64(file);
-                    setSelectedImage(compressedData);
-                    setActiveTab('analysis');
-                    runAnalysis(compressedData, "");
-                } catch (err) { setError(`Image Compress Error: ${err.message}`); }
-            };
-
-            const runAnalysis = async (imageData, context) => {
-                setIsAnalyzing(true);
-                setError(null);
-                try {
-                    const result = await callGeminiVision(imageData.base64, imageData.mimeType, context, apiKey);
-                    setAnalysisResult(result);
-                } catch (err) { setError(`${err.message}`); } 
-                finally { setIsAnalyzing(false); }
-            };
-
-            const handleAnswerQuestion = (question, answer) => {
-                const newContext = `${userContext}\nQ: ${question}\nA: ${answer}`;
-                setUserContext(newContext);
-                if (selectedImage) runAnalysis({ base64: selectedImage.base64, mimeType: selectedImage.mimeType }, newContext);
-            };
-
-            const handleAnalyzeRecipe = async () => {
-                if (!recipeText.trim()) return;
-                setActiveTab('analysis');
-                setIsAnalyzing(true);
-                setSelectedImage(null);
-                setError(null);
-                try {
-                    const result = await callGeminiText(recipeText, apiKey);
-                    setAnalysisResult(result);
-                } catch (err) { setError(`${err.message}`); } 
-                finally { setIsAnalyzing(false); }
+                if (!e.target.files?.[0]) return;
+                const compressed = await compressImageToBase64(e.target.files[0]);
+                setSelectedImage(compressed); setActiveTab('analysis'); runAnalysis(compressed, null);
             };
 
             const saveMeal = () => {
                 if (analysisResult) {
-                    setMealsToday([{ ...analysisResult, id: Date.now(), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), imageUrl: selectedImage?.url || null }, ...mealsToday]);
-                    setActiveTab('home'); setAnalysisResult(null); setSelectedImage(null); setUserContext("");
+                    setMealsToday([{ ...analysisResult, id: Date.now(), timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...mealsToday]);
+                    setActiveTab('home'); setAnalysisResult(null); setSelectedImage(null);
                 }
             };
 
-            if (!apiKey) {
-                return (
-                    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 p-4">
-                        <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl text-center">
-                            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4 text-orange-600 text-3xl"><i className="fa-solid fa-lock"></i></div>
-                            <h2 className="text-2xl font-bold text-gray-800 mb-2">Welcome to DesiNutri!</h2>
-                            <p className="text-sm text-gray-500 mb-6">Paste your Gemini API Key below to start.</p>
-                            <input type="password" placeholder="Paste your API Key here..." className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-orange-500" value={tempKey} onChange={(e) => setTempKey(e.target.value)} />
-                            <button onClick={handleSaveKey} className="w-full bg-orange-600 text-white font-bold py-4 rounded-xl shadow-lg active:scale-95 transition-transform">Save Securely & Start</button>
-                        </div>
+            const toggleFav = (meal) => {
+                if (favorites.find(f => f.id === meal.id)) setFavorites(favorites.filter(f => f.id !== meal.id));
+                else setFavorites([...favorites, meal]);
+            };
+
+            if (!apiKey) return (
+                <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 p-4">
+                    <div className="bg-white p-8 rounded-3xl w-full max-w-sm text-center">
+                        <h2 className="text-2xl font-bold mb-2">DesiNutri</h2>
+                        <input type="password" placeholder="API Key..." className="w-full p-4 bg-gray-50 rounded-xl mb-4" onChange={(e) => setTempKey(e.target.value)} />
+                        <button onClick={() => { localStorage.setItem('gemini_api_key', tempKey); setApiKey(tempKey); }} className="w-full bg-orange-600 text-white py-4 rounded-xl font-bold">Start</button>
                     </div>
-                );
-            }
+                </div>
+            );
 
             return (
                 <div className="flex justify-center items-center min-h-screen bg-gray-900 md:p-4">
-                    <div className="w-full h-[100dvh] md:h-[850px] max-w-[400px] bg-white md:rounded-[2.5rem] overflow-hidden flex flex-col relative shadow-2xl">
-                        <div className="flex-1 overflow-hidden relative">
+                    <div className="w-full h-[100dvh] md:h-[850px] max-w-[400px] bg-white md:rounded-[2.5rem] flex flex-col relative">
+                        
+                        {/* MAIN CONTENT AREA */}
+                        <div className="flex-1 overflow-y-auto pb-24 bg-gray-50">
                             
-                            {/* HOME VIEW */}
-                            <div className={activeTab === 'home' ? 'block' : 'hidden'}>
-                                <div className="flex flex-col h-[100dvh] bg-gray-50 pb-20 overflow-y-auto no-scrollbar">
-                                    <div className="bg-orange-600 text-white p-6 shadow-md rounded-b-[2rem] relative">
-                                        <button onClick={handleLogout} className="absolute top-6 right-6 text-orange-200 text-sm"><i className="fa-solid fa-right-from-bracket"></i></button>
-                                        <h1 className="text-2xl font-bold mb-1">Today's Progress</h1>
-                                        <p className="text-orange-100 text-sm mb-6">Indian Nutrition Tracker</p>
-                                        <div className="flex items-center justify-between bg-white/20 rounded-2xl p-4 backdrop-blur-sm">
-                                            <div><p className="text-sm text-orange-50 font-medium">Calories Left</p><p className="text-3xl font-bold">{Math.max(0, dailyGoals.calories - consumed.calories)}</p></div>
-                                            <div className="text-right"><p className="text-sm text-orange-50 font-medium">Consumed</p><p className="text-xl font-semibold">{Math.round(consumed.calories)} kcal</p></div>
+                            {/* HOME */}
+                            {activeTab === 'home' && (
+                                <div>
+                                    <div className="bg-orange-600 text-white p-6 rounded-b-[2rem]">
+                                        <h1 className="text-2xl font-bold">Today's Progress</h1>
+                                        <div className="flex justify-between mt-4">
+                                            <div><p className="text-sm">Calories Left</p><p className="text-3xl font-bold">{Math.max(0, dailyGoals.calories - consumed.calories)}</p></div>
+                                            <div className="text-right"><p className="text-sm">Water (250ml)</p>
+                                                <button onClick={() => setWater(water + 1)} className="bg-blue-500 px-4 py-1 rounded-full font-bold mt-1 shadow active:scale-95"><i className="fa-solid fa-droplet mr-1"></i> {water}</button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="p-6">
-                                        <h2 className="text-lg font-bold text-gray-800 mb-4">Macros</h2>
-                                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-                                            <ProgressBar label="Protein" value={consumed.protein} max={dailyGoals.protein} colorClass="bg-blue-500" />
-                                            <ProgressBar label="Carbs" value={consumed.carbs} max={dailyGoals.carbs} colorClass="bg-green-500" />
-                                            <ProgressBar label="Fat" value={consumed.fat} max={dailyGoals.fat} colorClass="bg-yellow-500" />
+                                        <div className="bg-white p-5 rounded-2xl shadow-sm mb-6">
+                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">PROTEIN</span> <div className="h-2 bg-gray-200 rounded-full"><div className="h-2 bg-blue-500 rounded-full" style={{width: `${Math.min(100, consumed.protein/dailyGoals.protein*100)}%`}}></div></div></div>
+                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">CARBS</span> <div className="h-2 bg-gray-200 rounded-full"><div className="h-2 bg-green-500 rounded-full" style={{width: `${Math.min(100, consumed.carbs/dailyGoals.carbs*100)}%`}}></div></div></div>
+                                            <div className="mb-2"><span className="text-xs font-bold text-gray-500">FAT</span> <div className="h-2 bg-gray-200 rounded-full"><div className="h-2 bg-yellow-500 rounded-full" style={{width: `${Math.min(100, consumed.fat/dailyGoals.fat*100)}%`}}></div></div></div>
                                         </div>
-                                        <div className="mt-8 flex gap-4">
-                                            <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-orange-600 text-white py-4 rounded-2xl font-bold flex flex-col items-center justify-center shadow-lg active:scale-95 transition-transform"><i className="fa-solid fa-camera text-2xl mb-2"></i>Scan Food</button>
-                                            <button onClick={() => setActiveTab('recipe')} className="flex-1 bg-white text-orange-600 border-2 border-orange-100 py-4 rounded-2xl font-bold flex flex-col items-center justify-center shadow-sm active:scale-95 transition-transform"><i className="fa-solid fa-pen text-2xl mb-2 text-orange-400"></i>Recipe</button>
+                                        <div className="flex gap-4">
+                                            <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-orange-600 text-white py-4 rounded-2xl font-bold flex flex-col items-center"><i className="fa-solid fa-camera text-2xl mb-1"></i> Scan</button>
+                                            <button onClick={() => setActiveTab('recipe')} className="flex-1 bg-white text-orange-600 border-2 border-orange-100 py-4 rounded-2xl font-bold flex flex-col items-center"><i className="fa-solid fa-pen text-2xl mb-1"></i> Voice/Text</button>
                                         </div>
-                                        <input type="file" accept="image/*" capture="environment" className="hidden" ref={fileInputRef} onChange={handleImageCapture} />
                                     </div>
                                 </div>
-                            </div>
+                            )}
 
-                            {/* ANALYSIS VIEW */}
-                            <div className={activeTab === 'analysis' ? 'block' : 'hidden'}>
-                                <div className="flex flex-col h-[100dvh] bg-gray-50 overflow-y-auto pb-24 no-scrollbar">
-                                    <div className="sticky top-0 bg-white shadow-sm z-10 px-4 py-3 flex items-center gap-3">
-                                        <button onClick={() => { setActiveTab('home'); setAnalysisResult(null); setSelectedImage(null); }} className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full text-gray-600"><i className="fa-solid fa-chevron-left"></i></button>
-                                        <h2 className="font-bold text-lg text-gray-800">Analysis Result</h2>
-                                    </div>
-                                    {selectedImage && <div className="w-full h-48 bg-black relative"><img src={selectedImage.url} alt="Food" className="w-full h-full object-cover opacity-80" /></div>}
-                                    <div className="p-4 -mt-4 relative z-10">
-                                        {isAnalyzing ? (
-                                            <div className="bg-white rounded-2xl p-8 shadow-lg flex flex-col items-center justify-center min-h-[300px]">
-                                                <div className="w-16 h-16 border-4 border-orange-200 border-t-orange-600 rounded-full animate-spin mb-4"></div>
-                                                <p className="font-bold text-gray-700">Analyzing your meal...</p>
-                                                <p className="text-xs text-gray-400 mt-2">Connecting to Google AI...</p>
-                                            </div>
-                                        ) : error ? (
-                                            <div className="bg-red-50 text-red-600 p-4 rounded-2xl flex items-start gap-3 border border-red-100"><i className="fa-solid fa-circle-exclamation text-xl mt-0.5 shrink-0"></i><p className="text-sm font-mono break-words w-full">{error}</p></div>
-                                        ) : analysisResult ? (
-                                            <div className="space-y-4">
-                                                <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-                                                    <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-gray-800 text-lg">Total Estimate</h3><span className="text-2xl font-black text-orange-600">{analysisResult.meal_totals.calories} <span className="text-sm text-gray-500 font-normal">kcal</span></span></div>
-                                                    <div className="flex justify-between text-sm font-medium text-gray-600">
-                                                        <div className="text-center bg-blue-50 px-3 py-2 rounded-xl w-[30%]"><span className="block text-blue-600 font-bold">{analysisResult.meal_totals.protein_grams}g</span> Protein</div>
-                                                        <div className="text-center bg-green-50 px-3 py-2 rounded-xl w-[30%]"><span className="block text-green-600 font-bold">{analysisResult.meal_totals.carbs_grams}g</span> Carbs</div>
-                                                        <div className="text-center bg-yellow-50 px-3 py-2 rounded-xl w-[30%]"><span className="block text-yellow-600 font-bold">{analysisResult.meal_totals.fat_grams}g</span> Fat</div>
-                                                    </div>
-                                                </div>
-                                                {analysisResult.foods.some(f => f.follow_up_questions && f.follow_up_questions.length > 0) && (
-                                                    <div className="bg-orange-50 rounded-2xl p-4 border border-orange-100">
-                                                        <div className="flex items-center gap-2 text-orange-800 font-bold mb-3"><i className="fa-solid fa-circle-question"></i>Improve Accuracy</div>
-                                                        {analysisResult.foods.map((food, i) => food.follow_up_questions?.length > 0 && (
-                                                            <div key={i} className="mb-4 last:mb-0">
-                                                                <p className="text-sm font-medium text-gray-800 mb-2">For {food.food_name}:</p>
-                                                                {food.follow_up_questions.map((q, j) => (
-                                                                    <div key={j} className="flex gap-2">
-                                                                        <input type="text" placeholder={q} className="flex-1 text-sm p-2 rounded-lg border border-orange-200 focus:outline-none focus:ring-2 focus:ring-orange-500" onKeyDown={(e) => { if (e.key === 'Enter') { handleAnswerQuestion(q, e.target.value); e.target.value = ''; } }} />
-                                                                        <button className="bg-orange-600 text-white px-3 py-2 rounded-lg"><i className="fa-solid fa-paper-plane"></i></button>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                                <h3 className="font-bold text-gray-800 px-1 mt-6">Food Breakdown</h3>
-                                                {analysisResult.foods.map((food, idx) => (
-                                                    <div key={idx} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-                                                        <div className="flex justify-between items-start mb-2">
-                                                            <div><h4 className="font-bold text-gray-800">{food.food_name}</h4><p className="text-xs text-gray-500">{food.estimated_quantity} • ~{food.estimated_weight_grams}g</p></div>
-                                                            <div className="text-right"><span className="font-bold text-gray-800">{food.calories} kcal</span><div className="mt-1"><ConfidenceBadge level={food.confidence} /></div></div>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                                <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-100 md:max-w-[400px] md:mx-auto z-20">
-                                                    <button onClick={saveMeal} className="w-full bg-green-600 text-white py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-transform"><i className="fa-solid fa-floppy-disk"></i>Save Meal</button>
-                                                </div>
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* RECIPE VIEW */}
-                            <div className={activeTab === 'recipe' ? 'block' : 'hidden'}>
-                                <div className="flex flex-col h-[100dvh] bg-gray-50 p-4">
-                                    <div className="flex items-center gap-3 mb-6 mt-2">
-                                        <button onClick={() => setActiveTab('home')} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-gray-600 shadow-sm"><i className="fa-solid fa-chevron-left"></i></button>
-                                        <h2 className="font-bold text-lg text-gray-800">Homemade Recipe</h2>
-                                    </div>
-                                    <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex-1">
-                                        <textarea className="w-full h-48 p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:outline-none resize-none mb-4" placeholder="Type your recipe here..." value={recipeText} onChange={(e) => setRecipeText(e.target.value)}></textarea>
-                                        <button onClick={handleAnalyzeRecipe} disabled={!recipeText.trim() || isAnalyzing} className="w-full bg-orange-600 disabled:bg-orange-300 text-white py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-sm">{isAnalyzing ? "Analyzing..." : "Calculate Nutrition"}</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* HISTORY VIEW */}
-                            <div className={activeTab === 'history' ? 'block' : 'hidden'}>
-                                <div className="flex flex-col h-[100dvh] bg-gray-50 p-4 pb-20 overflow-y-auto no-scrollbar">
-                                    <h2 className="font-bold text-2xl text-gray-800 mb-6 mt-4 px-2">Meal History</h2>
-                                    {mealsToday.length === 0 ? (
-                                        <div className="flex flex-col items-center justify-center h-64 text-gray-400"><i className="fa-solid fa-clock-rotate-left text-5xl mb-4 opacity-20"></i><p>No meals tracked today yet.</p></div>
-                                    ) : (
+                            {/* ANALYSIS */}
+                            {activeTab === 'analysis' && (
+                                <div className="p-4">
+                                    <button onClick={() => setActiveTab('home')} className="mb-4"><i className="fa-solid fa-chevron-left text-xl"></i></button>
+                                    {isAnalyzing ? <div className="text-center mt-20"><div className="w-10 h-10 border-4 border-orange-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div><p>Analyzing...</p></div> : 
+                                    analysisResult && (
                                         <div className="space-y-4">
-                                            {mealsToday.map((meal) => (
-                                                <div key={meal.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex gap-4">
-                                                    {meal.imageUrl ? <img src={meal.imageUrl} alt="Meal" className="w-20 h-20 rounded-xl object-cover" /> : <div className="w-20 h-20 rounded-xl bg-orange-100 flex items-center justify-center text-orange-400"><i className="fa-solid fa-utensils text-2xl"></i></div>}
-                                                    <div className="flex-1">
-                                                        <div className="flex justify-between items-start"><h3 className="font-bold text-gray-800 line-clamp-1 text-sm">{meal.foods.map(f => f.food_name).join(', ')}</h3><span className="text-xs text-gray-500 ml-2 whitespace-nowrap">{meal.timestamp}</span></div>
-                                                        <p className="text-orange-600 font-bold mt-1">{meal.meal_totals.calories} kcal</p>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                            <h2 className="text-2xl font-bold text-orange-600">{analysisResult.meal_totals.calories} kcal</h2>
+                                            <p className="text-sm font-bold text-gray-500">P: {analysisResult.meal_totals.protein_grams}g | C: {analysisResult.meal_totals.carbs_grams}g | F: {analysisResult.meal_totals.fat_grams}g</p>
+                                            {analysisResult.foods.map((f, i) => <div key={i} className="bg-white p-3 rounded-xl shadow-sm"><span className="font-bold">{f.food_name}</span> - {f.calories} kcal</div>)}
+                                            <button onClick={saveMeal} className="w-full bg-green-600 text-white py-3 rounded-xl font-bold mt-4">Save Meal</button>
                                         </div>
                                     )}
                                 </div>
-                            </div>
+                            )}
 
+                            {/* RECIPE / VOICE */}
+                            {activeTab === 'recipe' && (
+                                <div className="p-6">
+                                    <h2 className="text-xl font-bold mb-4">Log Food manually</h2>
+                                    <div className="relative">
+                                        <textarea className="w-full h-40 p-4 bg-white rounded-xl border" placeholder="e.g. 2 parathas with curd..." value={recipeText} onChange={e=>setRecipeText(e.target.value)}></textarea>
+                                        <button onClick={startVoice} className={`absolute bottom-4 right-4 w-10 h-10 rounded-full text-white ${isListening ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`}><i className="fa-solid fa-microphone"></i></button>
+                                    </div>
+                                    <button onClick={() => {setActiveTab('analysis'); runAnalysis(null, recipeText);}} className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold mt-4">Analyze</button>
+                                </div>
+                            )}
+
+                            {/* HISTORY & FAVS */}
+                            {activeTab === 'history' && (
+                                <div className="p-6">
+                                    <h2 className="text-xl font-bold mb-4">History & Favorites</h2>
+                                    {mealsToday.map(m => (
+                                        <div key={m.id} className="bg-white p-4 rounded-xl shadow-sm mb-3 flex justify-between items-center">
+                                            <div><p className="font-bold">{m.foods.map(f=>f.food_name).join(', ')}</p><p className="text-sm text-gray-500">{m.meal_totals.calories} kcal</p></div>
+                                            <button onClick={() => toggleFav(m)} className={`text-xl ${favorites.find(f=>f.id===m.id) ? 'text-yellow-400' : 'text-gray-300'}`}><i className="fa-solid fa-star"></i></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* ANALYTICS */}
+                            {activeTab === 'analytics' && (
+                                <div className="p-6">
+                                    <h2 className="text-xl font-bold mb-6">Weekly Trends</h2>
+                                    <div className="bg-white p-6 rounded-2xl shadow-sm flex items-end justify-between h-48">
+                                        {/* Mock 7-day bars for demonstration */}
+                                        {[60, 80, 40, 90, 75, 50, Math.min(100, consumed.calories/dailyGoals.calories*100)].map((h, i) => (
+                                            <div key={i} className="w-8 bg-orange-200 rounded-t-md relative group">
+                                                <div className="absolute bottom-0 w-full bg-orange-600 rounded-t-md" style={{height: `${h}%`}}></div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-center text-sm text-gray-500 mt-4">7-Day Calorie Average</p>
+                                </div>
+                            )}
                         </div>
-                        
-                        {/* BOTTOM NAVIGATION */}
-                        {activeTab !== 'analysis' && (
-                            <div className="bg-white border-t border-gray-100 flex justify-around items-center py-3 pb-6 px-4 absolute bottom-0 w-full z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
-                                <button onClick={() => setActiveTab('home')} className={`flex flex-col items-center p-2 w-16 ${activeTab === 'home' ? 'text-orange-600' : 'text-gray-400'}`}><i className="fa-solid fa-chart-line text-xl mb-1"></i><span className="text-[10px] font-medium">Home</span></button>
-                                <button onClick={() => fileInputRef.current?.click()} className="bg-orange-600 text-white w-14 h-14 rounded-full flex items-center justify-center -mt-8 shadow-lg shadow-orange-200 border-4 border-white active:scale-95 transition-transform"><i className="fa-solid fa-camera text-xl"></i></button>
-                                <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center p-2 w-16 ${activeTab === 'history' ? 'text-orange-600' : 'text-gray-400'}`}><i className="fa-solid fa-clock-rotate-left text-xl mb-1"></i><span className="text-[10px] font-medium">History</span></button>
-                            </div>
-                        )}
+
+                        {/* BOTTOM NAV */}
+                        <div className="absolute bottom-0 w-full bg-white border-t py-3 px-4 flex justify-between items-center z-50">
+                            <button onClick={()=>setActiveTab('home')} className={activeTab==='home'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-house text-xl"></i></button>
+                            <button onClick={()=>setActiveTab('analytics')} className={activeTab==='analytics'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-chart-bar text-xl"></i></button>
+                            <button onClick={()=>fileInputRef.current?.click()} className="bg-orange-600 text-white w-14 h-14 rounded-full -mt-8 flex items-center justify-center shadow-lg"><i className="fa-solid fa-camera text-xl"></i></button>
+                            <button onClick={()=>setActiveTab('recipe')} className={activeTab==='recipe'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-microphone text-xl"></i></button>
+                            <button onClick={()=>setActiveTab('history')} className={activeTab==='history'?'text-orange-600':'text-gray-400'}><i className="fa-solid fa-clock-rotate-left text-xl"></i></button>
+                        </div>
+                        <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageCapture} />
                     </div>
                 </div>
             );
         };
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<App />);
     </script>
 </body>
 </html>
